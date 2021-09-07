@@ -9,8 +9,8 @@ class ExpressionalNodePrototype(
     val positions: List<PositionPrototype>,
     val constraints: List<ConstraintPrototype>,
 ) {
-    val image: PositionPrototype.Image
-        get() = positions.last() as? PositionPrototype.Image ?: throw IllegalStateException("last position must ALWAYS be Image")
+    val image: PositionPrototype.Image = positions.last() as? PositionPrototype.Image
+        ?: throw IllegalStateException("last position must ALWAYS be Image")
 
     fun manufacture(entityHydrator: EntityHydrator) = ExpressionalNode(this, entityHydrator)
 }

@@ -66,17 +66,11 @@ class EntityHydrator {
     fun hydrate(constraints: Iterable<ConstraintPrototype>) =
         constraints.map { (head, tail) ->
             if (head to tail in hydratedConstraints) return@map hydratedConstraints[head to tail]!!
-            ensurePresence(tail.node ?: throw IllegalStateException("Can not hydrate unfinished position"))
-            ensurePresence(head.node ?: throw IllegalStateException("Can not hydrate unfinished position"))
             Constraint(
                 hydratedPositions[head] ?: throw IllegalStateException("Position must be hydrated if node is hydrated"),
                 hydratedPositions[tail] ?: throw IllegalStateException("Position must be hydrated if node is hydrated"),
             )
         }
-
-    private fun ensurePresence(node: ExpressionalNodePrototype) {
-        if (node !in hydratedExpressions) node.manufacture(this)
-    }
 
     fun register(prototype: ExpressionalNodePrototype, node: ExpressionalNode) {
         hydratedExpressions[prototype] = node
@@ -174,7 +168,7 @@ class ConstraintGraphBuilder(private val context: Context) {
                     is Expression.FunctionCall -> listOf(argPosition).also {
                         constraints += ConstraintPrototype(
                             argPosition,
-                            buildFrom(argument, constraintBuilder).image
+                            buildFrom(argument, constraintBuilder).image,
                         )
                     }
                     is Expression.Variable -> listOf(argPosition).also {
@@ -182,7 +176,7 @@ class ConstraintGraphBuilder(private val context: Context) {
                     }
                 }
             }
-        } + Image()
+        } + Image
         return ExpressionalNodePrototype(
             call,
             context.findFunctionsBy(
@@ -194,6 +188,6 @@ class ConstraintGraphBuilder(private val context: Context) {
             ).toMutableList(),
             positions,
             constraints.toList(),
-        ).also { node -> positions.forEach { it.node = node } }
+        )
     }
 }
