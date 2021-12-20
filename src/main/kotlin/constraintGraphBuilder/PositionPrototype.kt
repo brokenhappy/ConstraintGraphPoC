@@ -24,7 +24,14 @@ sealed interface PositionPrototype {
             Position.ClosureImage(entityHydrator.cached(argument, node))
     }
 
-    object Image : PositionPrototype {
+    class Image : PositionPrototype {
         override fun manufacture(node: ExpressionalNode, entityHydrator: EntityHydrator) = Position.Image(node)
+        override fun equals(other: Any?): Boolean {
+            return this === other
+        }
+
+        override fun hashCode(): Int {
+            return System.identityHashCode(this)
+        }
     }
 }

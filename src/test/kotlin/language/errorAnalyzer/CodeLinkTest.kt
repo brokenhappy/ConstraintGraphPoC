@@ -23,11 +23,6 @@ internal class CodeLinkTest {
     }
 
     @Test
-    fun `test that if code link is under the code, an exception is thrown`() {
-        assertThrows(Exception::class.java) { CodeLink(3, 13).resolveIndexIn("foobar") }
-    }
-
-    @Test
     fun `test that it works over multiple lines`() {
         assertEquals(
             8,

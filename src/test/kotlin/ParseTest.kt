@@ -1,4 +1,5 @@
 import org.junit.jupiter.api.Assertions
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import typeResolve.Expression
@@ -175,10 +176,21 @@ class ParseTest {
         )
     }
 
-    class IllegalExpressions {
+    @Nested
+    inner class IllegalExpressions {
         @Test
         fun `trailing closure without closing bracket`() {
             assertIllegal("foo {")
+        }
+
+        @Test
+        fun `function inside of function with missing closing parenthesis`() {
+            assertIllegal("foo(cde()")
+        }
+
+        @Test
+        fun `closure has extra opening bracket before closing`() {
+            assertIllegal("foo { \$0 + bar() {}")
         }
 
         @Test

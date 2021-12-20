@@ -1,8 +1,13 @@
 package constraintGraphBuilder
 
 import constraintGraphBuilder.PositionPrototype.*
+import javafx.scene.paint.Color
+import javafx.scene.text.Text
 import language.configReader.Context
+import tornadofx.style
 import typeResolve.Expression
+import typeResolve.GraphSatisfactionEventHandler
+import typeResolve.GraphSatisfactionEventHandler.MatrixCell
 import typeResolve.Symbol.Function
 import typeResolve.Type
 import java.util.*
@@ -37,15 +42,19 @@ val Position.types: List<Type> get() = node.candidates.map { typeOn(it) }
 class ExpressionalNode internal constructor(
     prototype: ExpressionalNodePrototype,
     hydrator: EntityHydrator,
+    allNodes: Stack<ExpressionalNodePrototype>,
 ) {
+    val positions: List<Position>
+
     init {
         hydrator.register(prototype, this)
+        positions = hydrator.hydrate(prototype.positions, this)
+        if (allNodes.isNotEmpty())
+            allNodes.pop().manufacture(hydrator, allNodes)
     }
 
     val call = prototype.expression
-
     val candidates = prototype.candidates.toMutableList()
-    val positions = hydrator.hydrate(prototype.positions, this)
     val image = positions.last() as? Position.Image ?: throw IllegalStateException("Last position must be image")
     val constraints = hydrator.hydrate(prototype.constraints)
 }
@@ -78,35 +87,137 @@ class EntityHydrator {
 }
 
 data class Graph(val rootNode: ExpressionalNode) {
-    val allNodes = HashSet<ExpressionalNode>().also { addAllNodes(rootNode, it) }
 
-    private fun addAllNodes(node: ExpressionalNode, allNodes: MutableSet<ExpressionalNode>) {
-        if (allNodes.add(node))
-            node.constraints.forEach { (head, tail) ->
-                addAllNodes(head.node, allNodes)
-                addAllNodes(tail.node, allNodes)
+    val allSortedNodes: List<ExpressionalNode>
+
+    init {
+        fun addAllNodes(node: ExpressionalNode, allNodes: MutableSet<ExpressionalNode>) {
+            if (allNodes.add(node))
+                node.constraints.forEach { (head, tail) ->
+                    addAllNodes(head.node, allNodes)
+                    addAllNodes(tail.node, allNodes)
+                }
+        }
+
+        val allNodes = HashSet<ExpressionalNode>().also { addAllNodes(rootNode, it) }
+        val allCallsByNode = allNodes.associateWithTo(IdentityHashMap()) { it.call }
+        fun Expression.FunctionCall.findDepthOf(call: Expression.FunctionCall, currentDepth: Int): Int {
+            fun recurseOn(expression: Expression, currentDepth: Int): Int = when (expression) {
+                Expression.Closure.Empty,
+                is Expression.Variable -> 0
+                is Expression.Closure.Filled -> recurseOn(expression.expression, currentDepth)
+                is Expression.FunctionCall -> expression.findDepthOf(call, currentDepth + 1)
             }
+            return if (this === call)
+                currentDepth
+            else
+                arguments.maxOfOrNull { argument -> recurseOn(argument, currentDepth) } ?: 0
+        }
+
+        fun findDepth(node: ExpressionalNode): Int = allCallsByNode[node]!!.let { call ->
+            allCallsByNode[rootNode]!!.findDepthOf(call, 0)
+        }
+        allSortedNodes = allNodes.sortedBy { findDepth(it) }
     }
 
-    val constraints get() = allNodes.flatMapTo(HashSet()) { it.constraints }
+    private val nodeLabels: Map<ExpressionalNode, String>
+
+    init {
+        val usedNames = mutableSetOf<String>()
+        nodeLabels = allSortedNodes.associateWith { node ->
+            node.call.name.let { name ->
+                if (name !in usedNames) name
+                else (0..9999).firstNotNullOf { i -> "name$i".takeUnless { it in usedNames } }
+            }
+        }
+    }
+
+    private val ExpressionalNode.label get() = nodeLabels[this]!!
+
+    private val positionLabels: Map<Position, String> = allSortedNodes
+        .flatMap { it.positions }
+        .withIndex()
+        .associate { (i, position) -> position to "p$i" }
+
+    fun labelOf(position: Position) = positionLabels[position]!!
+
+    data class Matrix(val columns: List<List<Text>>) {
+        init {
+            val columnWidths = columns.map { column -> column.sumOf { it.text.length } }
+            columnWidths.zip(columns).forEach { (columWidth, column) ->
+                column.forEach { text ->
+                    text.text = " ".repeat(columWidth - text.text.length) + text.text
+                }
+            }
+        }
+
+        val rows = columns.first().indices.map { x -> columns.indices.map { y -> columns[y][x] } }
+    }
+
+    fun represent(highlightedCells: Set<MatrixCell>): List<Matrix> {
+        val highlighterCellByPosition = highlightedCells.associateBy { it.position }
+        return allSortedNodes.map { node ->
+            Matrix(
+                listOf(listOf(Text(node.label)) + node.candidates.indices.map { Text() }) +
+                        node.positions.map { position ->
+                            listOf(Text(labelOf(position)).also {
+                                if (position in highlighterCellByPosition)
+                                    it.style { fill = Color.GREEN }
+                            }) +
+                                    node.candidates.map { candidate ->
+                                        Text(position.typeOn(candidate).toString()).also { text ->
+                                            highlighterCellByPosition[position]?.also { (highlightedPosition, highlightedCandidate) ->
+                                                if (highlightedPosition == position) {
+                                                    text.style {
+                                                        fill = if (highlightedCandidate == candidate)
+                                                            Color.BLUE
+                                                        else
+                                                            Color.GREEN
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                        })
+        }
+    }
+
+    val constraints get() = allSortedNodes.flatMapTo(HashSet()) { it.constraints }
 }
 
 data class Constraint(val tail: Position, val head: Position) {
-    private fun satisfyTail(): Boolean =
-        tail.node.candidates.filtering { candidate -> head.types.any { tail.typeOn(candidate) isAssignableFrom it } }
+    private suspend fun satisfyTail(eventHandler: GraphSatisfactionEventHandler): Boolean =
+        tail.node.candidates.filtering { tailCandidate ->
+            val smaller = MatrixCell(tail, tailCandidate)
+            head.node.candidates.any { headCandidate ->
+                val greater = MatrixCell(head, headCandidate)
+                eventHandler.handleTypeCheck(smaller, greater)
+                smaller.type.isAssignableFrom(greater.type)
+                    .also { if (it) eventHandler.handleMatch(smaller, greater) }
+            }.also { if (!it) eventHandler.handleElimination(smaller, head) }
+        }
 
-    private fun satisfyHead(): Boolean =
-        head.node.candidates.filtering { candidate -> tail.types.any { it isAssignableFrom head.typeOn(candidate) } }
+    private suspend fun satisfyHead(eventHandler: GraphSatisfactionEventHandler): Boolean =
+        head.node.candidates.filtering { headCandidate ->
+            val greater = MatrixCell(head, headCandidate)
+            tail.node.candidates.any { tailCandidate ->
+                val smaller = MatrixCell(tail, tailCandidate)
+                eventHandler.handleTypeCheck(greater, smaller)
+                smaller.type.isAssignableFrom(greater.type)
+                    .also { if (it) eventHandler.handleMatch(smaller, greater) }
+            }.also { if (!it) eventHandler.handleElimination(greater, head) }
+        }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun satisfyAndGiveAllSiblingsThatMightBeUnsatisfied() = buildSet {
-        if (satisfyHead()) addAll(head.node.constraints)
-        if (satisfyTail()) addAll(tail.node.constraints)
-        remove(this@Constraint)
-    }
+    suspend fun satisfyAndGiveAllSiblingsThatMightBeUnsatisfied(eventHandler: GraphSatisfactionEventHandler) =
+        buildSet {
+            if (satisfyHead(eventHandler)) addAll(head.node.constraints)
+            if (satisfyTail(eventHandler)) addAll(tail.node.constraints)
+            remove(this@Constraint)
+        }
 }
 
-private fun <E> MutableList<E>.filtering(function: (E) -> Boolean): Boolean {
+private inline fun <E> MutableList<E>.filtering(function: (E) -> Boolean): Boolean {
     val initialSize = size
     iterator().run {
         while (hasNext()) {
@@ -134,11 +245,12 @@ class ConstraintGraphBuilder(private val context: Context) {
     }
 
     fun buildFrom(expression: Expression.FunctionCall) =
-        Graph(buildFrom(expression, ConstraintBuilder()).manufacture(EntityHydrator()))
+        Graph(buildFrom(expression, ConstraintBuilder(), mutableListOf()).manufacture(EntityHydrator()))
 
     private fun buildFrom(
         call: Expression.FunctionCall,
-        constraintBuilder: ConstraintBuilder
+        constraintBuilder: ConstraintBuilder,
+        allNodes: MutableList<ExpressionalNodePrototype>,
     ): ExpressionalNodePrototype {
         val constraints = mutableListOf<ConstraintPrototype>()
         val positions = call.arguments.flatMapIndexed { i, argument ->
@@ -152,7 +264,7 @@ class ConstraintGraphBuilder(private val context: Context) {
                         constraintBuilder.scoped(parameters) {
                             constraints += when (argument.expression) {
                                 is Expression.FunctionCall -> ConstraintPrototype(
-                                    buildFrom(argument.expression, this).image,
+                                    buildFrom(argument.expression, this, allNodes).image,
                                     closureImage,
                                 )
                                 is Expression.Variable -> ConstraintPrototype(
@@ -168,7 +280,7 @@ class ConstraintGraphBuilder(private val context: Context) {
                     is Expression.FunctionCall -> listOf(argPosition).also {
                         constraints += ConstraintPrototype(
                             argPosition,
-                            buildFrom(argument, constraintBuilder).image,
+                            buildFrom(argument, constraintBuilder, allNodes).image,
                         )
                     }
                     is Expression.Variable -> listOf(argPosition).also {
@@ -176,7 +288,7 @@ class ConstraintGraphBuilder(private val context: Context) {
                     }
                 }
             }
-        } + Image
+        } + Image()
         return ExpressionalNodePrototype(
             call,
             context.findFunctionsBy(
@@ -188,6 +300,7 @@ class ConstraintGraphBuilder(private val context: Context) {
             ).toMutableList(),
             positions,
             constraints.toList(),
-        )
+            allNodes,
+        ).also(allNodes::add)
     }
 }

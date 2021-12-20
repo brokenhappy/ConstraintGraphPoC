@@ -18,7 +18,6 @@ class ExpressionParser {
         private val atClosingParenthesis get() = curChar == ')'
         private val atArrow get() = curChar == '-' && text[index + 1] == '>'
         private val atComma get() = curChar == ','
-        private val atExpressionStopper get() = atEoL || atComma || atClosingBracket || atClosingParenthesis
         private val atName
             get() = !(atOpeningBracket || atClosingBracket || atOpeningParenthesis
                     || atClosingParenthesis || atComma || atArrow || curChar.isWhitespace())
@@ -123,7 +122,7 @@ class ExpressionParser {
                     validate(!atEoL) { "Unexpected EoL, expected closing parenthesis or comma" }
                     atClosingParenthesis
                 }.also {
-                    validate(atClosingParenthesis)
+                    validate(!atEoL || atClosingParenthesis)
                     nextAndSkipWhiteSpace()
                 }
 
@@ -137,7 +136,7 @@ class ExpressionParser {
             do {
                 if (atComma)
                     nextAndSkipWhiteSpace()
-                add(parseExpression { atComma || isAtStop() })
+                add(parseExpression { isAtStop() || atComma })
             } while (atComma)
         }
 
@@ -148,7 +147,7 @@ class ExpressionParser {
             return (if (atClosingBracket) Closure.Empty else readFilledClosure())
                 .also {
                     skipWhiteSpace()
-                    validate(atClosingBracket)
+                    validate(!atEoL && atClosingBracket)
                     nextAndSkipWhiteSpace()
                 }
         }

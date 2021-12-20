@@ -10,10 +10,9 @@ interface ErrorAnalyzer {
 
             @Contract(pure = true)
             fun resolveIndexIn(code: String): Int {
-                val indexAtStartOfLine = code.split("\n").asSequence()
-                    .runningFold(0) { acc, line -> acc + line.length + 1 }
-                    .drop(line - 1)
-                    .first()
+                val indexAtStartOfLine = code.lineSequence()
+                    .take(line - 1)
+                    .fold(0) { acc, line -> acc + line.length + 1 }
 
                 return indexAtStartOfLine + (column ?: 1) - 1
             }

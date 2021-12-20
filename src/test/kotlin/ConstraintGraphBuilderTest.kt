@@ -48,8 +48,8 @@ class ConstraintGraphBuilderTest {
         ConstraintGraphBuilder(context).buildFrom(
             ExpressionParser().parse("foo({ a -> a })") as Expression.FunctionCall
         ).constraints.first().also {
-            Assertions.assertEquals(listOf(Type.double), it.tail.types.toList())
-            Assertions.assertEquals(listOf(Type.int), it.head.types.toList())
+            Assertions.assertEquals(listOf(Type.int), it.tail.types.toList())
+            Assertions.assertEquals(listOf(Type.double), it.head.types.toList())
         }
     }
 
@@ -66,8 +66,45 @@ class ConstraintGraphBuilderTest {
         ConstraintGraphBuilder(context).buildFrom(
             ExpressionParser().parse("foo({ a -> bar({ a -> a }) })") as Expression.FunctionCall
         ).constraints.first { it.head.node.call.name == "bar" }.also {
-            Assertions.assertEquals(listOf(Type.int), it.tail.types.toList())
-            Assertions.assertEquals(listOf(Type.double), it.head.types.toList())
+            Assertions.assertEquals(listOf(Type.double), it.tail.types.toList())
+            Assertions.assertEquals(listOf(Type.int), it.head.types.toList())
         }
+    }
+
+    @Test
+    fun `sadasd`() {
+        val context = context {
+
+//            type B
+//            type C
+//            type D
+//
+//            func abc() -> B
+//            func abc() -> C
+//            func abc() -> D
+//
+//            func cde(C) -> C
+//            func cde(D) -> D
+//
+//            func +(D, D) -> D
+//            func +(B, B) -> B
+            val B = type("B")
+            val C = type("C")
+            val D = type("D")
+
+            func("bcd")() returns B
+            func("bcd")() returns C
+            func("bcd")() returns D
+
+            func("cd")(C) returns C
+            func("cd")(D) returns D
+
+            func("+")(D, D) returns D
+            func("+")(B, B) returns B
+        }
+
+        ConstraintGraphBuilder(context).buildFrom(
+            ExpressionParser().parse("cde(bcd()) + bcd()") as Expression.FunctionCall
+        ).allSortedNodes.size.also { Assertions.assertEquals(4, it) }
     }
 }
